@@ -63,6 +63,7 @@ pum_display(
 #if defined(FEAT_WINDOWS) && defined(FEAT_QUICKFIX)
     win_T	*pvwin;
 #endif
+    unsigned	idx_width;
 
 redo:
     def_width = PUM_DEF_WIDTH;
@@ -71,6 +72,7 @@ redo:
     extra_width = 0;
     above_row = 0;
     below_row = cmdline_row;
+    idx_width = 0;
 
     /* Pretend the pum is already there to avoid that must_redraw is set when
      * 'cuc' is on. */
@@ -186,6 +188,7 @@ redo:
     }
     pum_base_width = max_width;
     pum_kind_width = kind_width;
+    idx_width = (size == 0 ? 1 : (unsigned)(log10(size)+1));
 
     /* Calculate column */
 #ifdef FEAT_RIGHTLEFT
@@ -224,10 +227,10 @@ redo:
 #endif
 	    pum_width = Columns - pum_col - pum_scrollbar;
 
-	if (pum_width > max_width + kind_width + extra_width + 1
+	if (pum_width > max_width + kind_width + extra_width + idx_width + 1
 						 && pum_width > PUM_DEF_WIDTH)
 	{
-	    pum_width = max_width + kind_width + extra_width + 1;
+	    pum_width = max_width + kind_width + extra_width + idx_width + 1;
 	    if (pum_width < PUM_DEF_WIDTH)
 		pum_width = PUM_DEF_WIDTH;
 	}
@@ -321,18 +324,27 @@ pum_redraw(void)
 		screen_putchar(' ', row, pum_col - 1, attr);
 
 	/* Display each entry, use two spaces for a Tab.
-	 * Do this 3 times: For the main text, kind and extra info */
+	 * Do this 4 times: For the main text, kind , extra info and index */
 	col = pum_col;
 	totwidth = 0;
-	for (round = 1; round <= 3; ++round)
+	for (round = 1; round <= 4; ++round)
 	{
 	    width = 0;
 	    s = NULL;
+	    unsigned p_str_len  = 0;
+	    char *p_str_mem = NULL;
 	    switch (round)
 	    {
 		case 1: p = pum_array[idx].pum_text; break;
 		case 2: p = pum_array[idx].pum_kind; break;
 		case 3: p = pum_array[idx].pum_extra; break;
+		case 4: 
+			p_str_len = (idx == 0 ? 1 : (unsigned)(log10(idx)+1));
+			p_str_mem = (char*)alloc(p_str_len+1);
+			// TODO: why unsigned char *?
+			p = (char_u*)p_str_mem;
+			sprintf(p_str_mem,"%u",idx+1);
+			break;
 	    }
 	    if (p != NULL)
 		for ( ; ; MB_PTR_ADV(p))
@@ -433,13 +445,20 @@ pum_redraw(void)
 	    else
 		n = 1;
 
+	    if (p_str_mem) {
+		vim_free(p_str_mem);
+	    }
+
 	    /* Stop when there is nothing more to display. */
-	    if (round == 3
-		    || (round == 2 && pum_array[idx].pum_extra == NULL)
-		    || (round == 1 && pum_array[idx].pum_kind == NULL
-					  && pum_array[idx].pum_extra == NULL)
-		    || pum_base_width + n >= pum_width)
+	    if (round == 4 || pum_base_width + n >= pum_width)
+	    {
 		break;
+	    }
+	    if ((round == 2 && pum_array[idx].pum_extra == NULL)
+		    || (round == 1 && pum_array[idx].pum_kind == NULL
+					  && pum_array[idx].pum_extra == NULL)) {
+		round = 3;
+	    }
 #ifdef FEAT_RIGHTLEFT
 	    if (curwin->w_p_rl)
 	    {
@@ -500,6 +519,13 @@ pum_set_selected(int n, int repeat)
     int	    context = pum_height / 2;
 
     pum_selected = n;
+
+    typval_T tv = {
+	.v_type = VAR_NUMBER,
+	.v_lock = 0,
+	.vval.v_number = pum_selected
+    };
+    set_var("w:popupmenulastselectedindex",&tv,1);
 
     if (pum_selected >= 0 && pum_selected < pum_size)
     {
